@@ -1,43 +1,82 @@
 import streamlit as st
+from auth import register_user, login_user
 
-
-# This is like a sticky note that remembers if someone is logged in
+# Sticky note to remember if logged in
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
+if 'page' not in st.session_state:
+    st.session_state.page = "login"
 
-# Fake user for today (we'll use real database later)
-FAKE_USERNAME = "testuser"
-FAKE_PASSWORD = "password123"
+# Sidebar menu (like a navigation bar)
+# Sidebar menu (like a navigation bar)
+st.sidebar.title("📚 Study Tracker")
 
-# Title of the app
-st.title("📚 Study & Skill Tracker")
-
-# If user is NOT logged in → show login form
-if not st.session_state.logged_in:
-    st.header("Login to Your Study Diary")
-
-    # Make a nice form
-    with st.form(key="login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")  # hides the letters
-        login_button = st.form_submit_button("Log In")
-
-    # When they click the button
-    if login_button:
-        if username == FAKE_USERNAME and password == FAKE_PASSWORD:
-            st.session_state.logged_in = True
-            st.success("Welcome back! 🎉 You are now logged in!")
-            st.balloons()
-        else:
-            st.error("Oops! Wrong username or password. Try again.")
-
-# If user IS logged in → show the main app
-else:
-    st.header("Welcome to your Dashboard! 🚀")
-    st.write("You are logged in as: " + FAKE_USERNAME)
+if st.session_state.logged_in:
+    st.sidebar.write(f"Welcome, {st.session_state.username}!")
     
-    # Logout button
-    if st.button("Log Out"):
+    if st.sidebar.button("Dashboard"):
+        st.session_state.page = "dashboard"
+        st.rerun()  # This makes the page refresh and show the new content
+    
+    if st.sidebar.button("Log Out"):
         st.session_state.logged_in = False
-        st.success("You have been logged out. See you soon! 👋")
-        st.rerun()  # Refresh the page
+        st.session_state.page = "login"
+        st.rerun()
+else:
+    # When NOT logged in, show Login & Register buttons
+    if st.sidebar.button("Login"):
+        st.session_state.page = "login"
+        st.rerun()
+    
+    if st.sidebar.button("Register"):
+        st.session_state.page = "register"
+        st.rerun()
+
+# Main content based on current page
+st.title("Study & Skill Tracker")
+
+if not st.session_state.logged_in:
+    if st.session_state.page == "login":
+        st.header("Login")
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Log In")
+
+        if submitted:
+            success, message = login_user(username, password)
+            if success:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.session_state.page = "dashboard"
+                st.success(message)
+                st.rerun()  # ← Add this line! It refreshes the page immediately
+            else:
+                st.error(message)
+
+    elif st.session_state.page == "register":
+        st.header("Register")
+        with st.form("register_form"):
+            new_username = st.text_input("Choose Username")
+            new_password = st.text_input("Choose Password", type="password")
+            confirm_password = st.text_input("Confirm Password", type="password")
+            submitted = st.form_submit_button("Sign Up")
+
+        if submitted:
+            if new_password != confirm_password:
+                st.error("Passwords don't match!")
+            elif not new_username or not new_password:
+                st.error("Please fill all fields!")
+            else:
+                success, message = register_user(new_username, new_password)
+                if success:
+                    st.success(message + " Now log in!")
+                    st.session_state.page = "login"
+                else:
+                    st.error(message)
+
+else:
+    # Dashboard page
+    st.header(f"Welcome to your Dashboard, {st.session_state.username}! 🚀")
+    st.write("Your study journey starts here! 🎓")
+    st.info("Coming soon: Add skills, log study hours, see charts!")
