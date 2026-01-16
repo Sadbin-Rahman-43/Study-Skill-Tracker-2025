@@ -1,41 +1,47 @@
-
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Date, DECIMAL, Enum
+from sqlalchemy import Column, Integer, String, DateTime, Enum, Text, ForeignKey, Date, Float
+from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
+from database import engine
 
 Base = declarative_base()
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
+
+    id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     email = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(Enum('admin', 'student'), default='student')
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    role = Column(Enum("admin", "student"), default="student")
+
 
 class Skill(Base):
     __tablename__ = "skills"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'))
-    skill_name = Column(String(100), nullable=False)
-    target_hours = Column(Integer, default=0)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+
+    user = relationship("User", back_populates="skills")
+    sessions = relationship("StudySession", back_populates="skill")
+
 
 class StudySession(Base):
     __tablename__ = "study_sessions"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'))
-    skill_id = Column(Integer, ForeignKey('skills.id', ondelete='SET NULL'), nullable=True)
-    session_date = Column(Date, nullable=False)
-    hours = Column(DECIMAL(4,2), nullable=False)
-    notes = Column(Text)
 
-class DailyLog(Base):
-    __tablename__ = "daily_logs"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'))
-    log_date = Column(Date, nullable=False)
-    task_done = Column(Text)
-    blocker = Column(Text)
-    next_plan = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    id = Column(Integer, primary_key=True, index=True)
+    skill_id = Column(Integer, ForeignKey("skills.id"), nullable=False)
+    date = Column(Date, nullable=False)
+    hours = Column(Float, nullable=False)
+    notes = Column(Text, nullable=True)
+
+    skill = relationship("Skill", back_populates="sessions")
+
+
+User.skills = relationship("Skill", back_populates="user")
+
+# CREATE TABLE IF NOT EXISTS (SAFE)
+Base.metadata.create_all(engine)

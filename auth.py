@@ -1,30 +1,52 @@
 import bcrypt
-import streamlit as st
+from database import SessionLocal
+from models import User
 
-# Fake users for now (we'll use database later)
-# Format: username -> hashed password
-users = {
-    "testuser": bcrypt.hashpw("password123".encode('utf-8'), bcrypt.gensalt())
-}
-
+# --------------------
+# PASSWORD HELPERS
+# --------------------
 def hash_password(password):
-    """Turn plain password into secret code"""
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 def check_password(password, hashed):
-    """Check if password matches the secret code"""
-    return bcrypt.checkpw(password.encode('utf-8'), hashed)
+    return bcrypt.checkpw(password.encode(), hashed.encode())
 
-def register_user(username, password):
-    """Add a new user (fake for now)"""
-    if username in users:
-        return False, "Username already taken!"
-    hashed = hash_password(password)
-    users[username] = hashed
-    return True, "Registration successful! You can now log in."
 
-def login_user(username, password):
-    """Check if login is correct"""
-    if username in users and check_password(password, users[username]):
-        return True, "Login successful!"
-    return False, "Wrong username or password."
+# --------------------
+# REGISTER
+# --------------------
+def register_user(name, email, password):
+    db = SessionLocal()
+
+    if db.query(User).filter(User.email == email).first():
+        db.close()
+        return False, "Email already registered"
+
+    role = "admin" if email == "admin@gmail.com" else "student"
+
+    user = User(
+        name=name,
+        email=email,
+        password_hash=hash_password(password),
+        role=role
+    )
+
+    db.add(user)
+    db.commit()
+    db.close()
+
+    return True, "Registration successful"
+
+
+# --------------------
+# LOGIN
+# --------------------
+def login_user(email, password):
+    db = SessionLocal()
+    user = db.query(User).filter(User.email == email).first()
+    db.close()
+
+    if user and check_password(password, user.password_hash):
+        return True, user.name, user.role, user.id
+
+    return False, None, "Invalid email or password", None
