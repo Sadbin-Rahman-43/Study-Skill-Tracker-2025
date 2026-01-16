@@ -110,6 +110,7 @@ else:
             description = st.text_area("Description (optional)")
             submit = st.form_submit_button("Add Skill")
 
+
             if submit:
                 if name:
                     db = SessionLocal()
