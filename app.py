@@ -2,7 +2,7 @@ import streamlit as st
 from auth import register_user, login_user
 from database_utils import get_db
 from sqlalchemy import func
-from models import Skill, StudySession, User, StudyTask
+from models import Skill, StudySession, User, StudyTask, Goal
 import datetime
 import pandas as pd
 import plotly.express as px
@@ -87,9 +87,9 @@ else:
     st.sidebar.title(f"Welcome {st.session_state.name} ({st.session_state.role})")
     
     if st.session_state.role == "admin":
-        menu = st.sidebar.radio("Navigation", ["Dashboard", "Study Plan", "Admin Panel", "Manage Skills", "Log Study", "History", "Analytics"])
+        menu = st.sidebar.radio("Navigation", ["Dashboard", "Study Plan", "Goals", "Admin Panel", "Manage Skills", "Log Study", "History", "Analytics"])
     else:
-        menu = st.sidebar.radio("Navigation", ["Dashboard", "Study Plan", "Manage Skills", "Log Study", "History", "Analytics"])
+        menu = st.sidebar.radio("Navigation", ["Dashboard", "Study Plan", "Goals", "Manage Skills", "Log Study", "History", "Analytics"])
 
     if st.sidebar.button("Logout"):
 
@@ -177,7 +177,7 @@ else:
                     
                     # Checkbox logic (Using session state to handle instant updates)
                     is_done = task.status == "Completed"
-                    checked = col1.checkbox("", value=is_done, key=f"check_{task.id}")
+                    checked = col1.checkbox("Done", value=is_done, key=f"check_{task.id}", label_visibility="hidden")
                     
                     if checked != is_done:
                         task.status = "Completed" if checked else "Pending"
@@ -191,6 +191,59 @@ else:
 
             else:
                 st.info("No tasks scheduled for today. Add one above! 👆")
+
+    elif menu == "Goals":
+        st.subheader("Goal Tracking 🎯")
+        
+        tab1, tab2 = st.tabs(["Active Goals", "Set New Goal"])
+        
+        # --- TAB 1: ACTIVE GOALS ---
+        with tab1:
+            with get_db() as db:
+                goals = db.query(Goal).filter(Goal.user_id == st.session_state.user_id).all()
+                if goals:
+                    for goal in goals:
+                        with st.expander(f"{goal.goal_name} ({goal.progress}%) - {goal.status}"):
+                            # 1. Update Progress
+                            new_prog = st.slider(f"Progress (%) for {goal.goal_name}", 0, 100, goal.progress, key=f"prog_{goal.id}")
+                            if new_prog != goal.progress:
+                                goal.progress = new_prog
+                                if new_prog == 100: goal.status = "Achieved"
+                                db.commit()
+                                st.rerun()
+
+                            # 2. Mark Achieved Button
+                            if goal.status != "Achieved":
+                                if st.button("Mark as Achieved 🏆", key=f"achieve_{goal.id}"):
+                                    goal.status = "Achieved"
+                                    goal.progress = 100
+                                    db.commit()
+                                    st.balloons()
+                                    st.rerun()
+                            else:
+                                st.success("Goal Achieved! 🎉")
+
+                else:
+                    st.info("No active goals. Set one in the next tab!")
+
+        # --- TAB 2: SET NEW GOAL ---
+        with tab2:
+            with st.form("new_goal_form"):
+                g_name = st.text_input("Goal Name (e.g., Complete Python Course)")
+                g_date = st.date_input("Target Date", datetime.date.today() + datetime.timedelta(days=30))
+                g_submit = st.form_submit_button("Set Goal")
+                
+                if g_submit and g_name:
+                    with get_db() as db:
+                        new_goal = Goal(
+                            user_id=st.session_state.user_id,
+                            goal_name=g_name,
+                            target_date=g_date
+                        )
+                        db.add(new_goal)
+                        db.commit()
+                    st.success("New Goal Set!")
+                    st.rerun()
 
     elif menu == "Manage Skills":
         st.subheader("Manage Skills 🛠️")
@@ -413,6 +466,17 @@ else:
             df_tasks = pd.DataFrame(task_stats, columns=["Status", "Count"])
             fig_pie = px.pie(df_tasks, names="Status", values="Count", title="Task Status Overview", hole=0.4)
             st.plotly_chart(fig_pie)
+
+        # Chart 0.5: Goal Progress
+        with get_db() as db:
+             goals = db.query(Goal.goal_name, Goal.progress).filter(Goal.user_id == st.session_state.user_id).all()
+        
+        if goals:
+            st.divider()
+            st.subheader("Goal Progress 🚀")
+            df_goals = pd.DataFrame(goals, columns=["Goal", "Progress"])
+            fig_goals = px.bar(df_goals, x="Goal", y="Progress", range_y=[0, 100], title="Long-term Goal Progress (%)", color="Progress")
+            st.plotly_chart(fig_goals)
 
         # Chart 1: Hours by Skill
         if skill_stats:

@@ -59,8 +59,22 @@ class StudyTask(Base):
     skill = relationship("Skill")
 
 
+class Goal(Base):
+    __tablename__ = "goals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    goal_name = Column(String(255), nullable=False)
+    target_date = Column(Date, nullable=False)
+    status = Column(Enum("In Progress", "Achieved", "Missed"), default="In Progress")
+    progress = Column(Integer, default=0) # 0 to 100
+
+    user = relationship("User", back_populates="goals")
+
+
 User.skills = relationship("Skill", back_populates="user", cascade="all, delete-orphan")
 User.tasks = relationship("StudyTask", back_populates="user", cascade="all, delete-orphan")
+User.goals = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
 
 # CREATE TABLE IF NOT EXISTS (SAFE)
 Base.metadata.create_all(engine)
