@@ -1,5 +1,5 @@
 import bcrypt
-from database import SessionLocal
+from database_utils import get_db
 from models import User
 
 # --------------------
@@ -16,24 +16,21 @@ def check_password(password, hashed):
 # REGISTER
 # --------------------
 def register_user(name, email, password):
-    db = SessionLocal()
+    with get_db() as db:
+        if db.query(User).filter(User.email == email).first():
+            return False, "Email already registered"
 
-    if db.query(User).filter(User.email == email).first():
-        db.close()
-        return False, "Email already registered"
+        role = "admin" if email == "admin@gmail.com" else "student"
 
-    role = "admin" if email == "admin@gmail.com" else "student"
+        user = User(
+            name=name,
+            email=email,
+            password_hash=hash_password(password),
+            role=role
+        )
 
-    user = User(
-        name=name,
-        email=email,
-        password_hash=hash_password(password),
-        role=role
-    )
-
-    db.add(user)
-    db.commit()
-    db.close()
+        db.add(user)
+        db.commit()
 
     return True, "Registration successful"
 
@@ -42,9 +39,8 @@ def register_user(name, email, password):
 # LOGIN
 # --------------------
 def login_user(email, password):
-    db = SessionLocal()
-    user = db.query(User).filter(User.email == email).first()
-    db.close()
+    with get_db() as db:
+        user = db.query(User).filter(User.email == email).first()
 
     if user and check_password(password, user.password_hash):
         return True, user.name, user.role, user.id
