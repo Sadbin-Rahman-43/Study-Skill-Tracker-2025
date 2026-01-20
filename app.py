@@ -1,7 +1,8 @@
 import streamlit as st
 from auth import register_user, login_user
-from database import SessionLocal
-from models import Skill, StudySession, User
+from database_utils import get_db
+from sqlalchemy import func
+from models import Skill, StudySession, User, StudyTask, Goal
 import datetime
 import pandas as pd
 import plotly.express as px
@@ -86,9 +87,9 @@ else:
     st.sidebar.title(f"Welcome {st.session_state.name} ({st.session_state.role})")
     
     if st.session_state.role == "admin":
-        menu = st.sidebar.radio("Navigation", ["Dashboard", "Admin Panel", "Add Skill", "My Skills", "Log Study", "History", "Analytics"])
+        menu = st.sidebar.radio("Navigation", ["Dashboard", "Study Plan", "Goals", "Admin Panel", "Manage Skills", "Log Study", "History", "Analytics"])
     else:
-        menu = st.sidebar.radio("Navigation", ["Dashboard", "Add Skill", "My Skills", "Log Study", "History", "Analytics"])
+        menu = st.sidebar.radio("Navigation", ["Dashboard", "Study Plan", "Goals", "Manage Skills", "Log Study", "History", "Analytics"])
 
     if st.sidebar.button("Logout"):
 
@@ -101,48 +102,224 @@ else:
     if menu == "Dashboard":
         st.subheader("Your Dashboard")
         st.write("Welcome to your study tracker!")
+        st.info("Check your 'Study Plan' to manage daily tasks!")
 
-    elif menu == "Add Skill":
-        st.subheader("Add a New Skill")
+    elif menu == "Study Plan":
+        st.subheader("Study Plan & To-Do 📝")
         
-        with st.form("add_skill_form"):
-            name = st.text_input("Skill Name (e.g. Python)")
-            description = st.text_area("Description (optional)")
-            submit = st.form_submit_button("Add Skill")
+        with get_db() as db:
+            # --- 1. BACKLOG CHECKER ---
+            today = datetime.date.today()
+            backlog_query = db.query(StudyTask).filter(
+                StudyTask.user_id == st.session_state.user_id,
+                StudyTask.due_date < today,
+                StudyTask.status == "Pending"
+            ).all()
 
+            if backlog_query:
+                st.error(f"⚠️ You have {len(backlog_query)} Overdue Tasks! (Backlog)")
+                with st.expander("View Backlog"):
+                    for task in backlog_query:
+                        col1, col2 = st.columns([3, 1])
+                        col1.write(f"❌ {task.task} (Due: {task.due_date})")
+                        if col2.button("Complete", key=f"backlog_{task.id}"):
+                            task.status = "Completed"
+                            db.commit()
+                            st.rerun()
 
-            if submit:
-                if name:
-                    db = SessionLocal()
-                    new_skill = Skill(user_id=st.session_state.user_id, name=name, description=description)
-                    db.add(new_skill)
-                    db.commit()
-                    db.close()
-                    st.success(f"Added skill: {name}")
+            
+            # --- 2. ADD NEW TASK ---
+            with st.expander("➕ Add New Task"):
+                with st.form("new_task_form"):
+                    t_desc = st.text_input("Task Description (e.g., Read Chapter 4)")
+                    t_skill = st.selectbox("Related Skill (Optional)", ["None"] + [s.name for s in db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()])
+                    t_date = st.date_input("Due Date", today)
+                    t_submit = st.form_submit_button("Add Task")
+
+                    if t_submit and t_desc:
+                        skill_id = None
+                        if t_skill != "None":
+                             # Find skill ID
+                             sk = db.query(Skill).filter(Skill.name == t_skill, Skill.user_id == st.session_state.user_id).first()
+                             if sk: skill_id = sk.id
+                        
+                        new_task = StudyTask(
+                            user_id=st.session_state.user_id,
+                            skill_id=skill_id, 
+                            task=t_desc,
+                            due_date=t_date,
+                            status="Pending"
+                        )
+                        db.add(new_task)
+                        db.commit()
+                        st.success("Task Added!")
+                        st.rerun()
+
+            # --- 3. TODAY'S TASKS ---
+            st.divider()
+            st.write(f"### Today's Tasks ({today})")
+            
+            todays_tasks = db.query(StudyTask).filter(
+                StudyTask.user_id == st.session_state.user_id,
+                StudyTask.due_date == today
+            ).all()
+
+            if todays_tasks:
+                # Progress Bar
+                completed_count = sum(1 for t in todays_tasks if t.status == "Completed")
+                total_count = len(todays_tasks)
+                progress = completed_count / total_count
+                st.progress(progress)
+                st.caption(f"{completed_count}/{total_count} Completed")
+
+                for task in todays_tasks:
+                    col1, col2 = st.columns([0.1, 0.9])
+                    
+                    # Checkbox logic (Using session state to handle instant updates)
+                    is_done = task.status == "Completed"
+                    checked = col1.checkbox("Done", value=is_done, key=f"check_{task.id}", label_visibility="hidden")
+                    
+                    if checked != is_done:
+                        task.status = "Completed" if checked else "Pending"
+                        db.commit()
+                        st.rerun()
+                    
+                    if is_done:
+                        col2.markdown(f"~~{task.task}~~")
+                    else:
+                        col2.write(task.task)
+
+            else:
+                st.info("No tasks scheduled for today. Add one above! 👆")
+
+    elif menu == "Goals":
+        st.subheader("Goal Tracking 🎯")
+        
+        tab1, tab2 = st.tabs(["Active Goals", "Set New Goal"])
+        
+        # --- TAB 1: ACTIVE GOALS ---
+        with tab1:
+            with get_db() as db:
+                goals = db.query(Goal).filter(Goal.user_id == st.session_state.user_id).all()
+                if goals:
+                    for goal in goals:
+                        with st.expander(f"{goal.goal_name} ({goal.progress}%) - {goal.status}"):
+                            # 1. Update Progress
+                            new_prog = st.slider(f"Progress (%) for {goal.goal_name}", 0, 100, goal.progress, key=f"prog_{goal.id}")
+                            if new_prog != goal.progress:
+                                goal.progress = new_prog
+                                if new_prog == 100: goal.status = "Achieved"
+                                db.commit()
+                                st.rerun()
+
+                            # 2. Mark Achieved Button
+                            if goal.status != "Achieved":
+                                if st.button("Mark as Achieved 🏆", key=f"achieve_{goal.id}"):
+                                    goal.status = "Achieved"
+                                    goal.progress = 100
+                                    db.commit()
+                                    st.balloons()
+                                    st.rerun()
+                            else:
+                                st.success("Goal Achieved! 🎉")
+
                 else:
-                    st.error("Skill name is required")
+                    st.info("No active goals. Set one in the next tab!")
 
-    elif menu == "My Skills":
-        st.subheader("My Skills")
+        # --- TAB 2: SET NEW GOAL ---
+        with tab2:
+            with st.form("new_goal_form"):
+                g_name = st.text_input("Goal Name (e.g., Complete Python Course)")
+                g_date = st.date_input("Target Date", datetime.date.today() + datetime.timedelta(days=30))
+                g_submit = st.form_submit_button("Set Goal")
+                
+                if g_submit and g_name:
+                    with get_db() as db:
+                        new_goal = Goal(
+                            user_id=st.session_state.user_id,
+                            goal_name=g_name,
+                            target_date=g_date
+                        )
+                        db.add(new_goal)
+                        db.commit()
+                    st.success("New Goal Set!")
+                    st.rerun()
+
+    elif menu == "Manage Skills":
+        st.subheader("Manage Skills 🛠️")
         
-        db = SessionLocal()
-        skills = db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()
-        db.close()
+        tab1, tab2 = st.tabs(["My Skills (View/Edit/Delete)", "Add New Skill"])
+        
+        # --- TAB 1: VIEW / EDIT / DELETE ---
+        with tab1:
+            with get_db() as db:
+                skills = db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()
+                
+                if skills:
+                    for skill in skills:
+                        with st.expander(f"📘 {skill.name}", expanded=False):
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                st.write(f"**Description:** {skill.description}")
+                                st.caption(f"Skill ID: {skill.id}")
+                            
+                            with col2:
+                                # Edit Button Toggle
+                                if st.button("Edit", key=f"edit_btn_{skill.id}"):
+                                    st.session_state[f"edit_mode_{skill.id}"] = True
+                                
+                                # Delete Button
+                                if st.button("Delete", key=f"del_btn_{skill.id}", type="primary"):
+                                    db.delete(skill)
+                                    db.commit()
+                                    st.success(f"Deleted {skill.name}")
+                                    st.rerun()
 
-        if skills:
-            for skill in skills:
-                with st.expander(f"📘 {skill.name}"):
-                    st.write(skill.description)
-                    st.write(f"ID: {skill.id}")
-        else:
-            st.info("No skills added yet. Go to 'Add Skill' to get started!")
+                            # --- EDIT FORM (Visible if Edit clicked) ---
+                            if st.session_state.get(f"edit_mode_{skill.id}", False):
+                                st.info(f"Editing {skill.name}")
+                                with st.form(f"edit_skill_{skill.id}"):
+                                    new_name = st.text_input("New Name", value=skill.name)
+                                    new_desc = st.text_area("New Description", value=skill.description)
+                                    
+                                    if st.form_submit_button("Save Changes"):
+                                        skill.name = new_name
+                                        skill.description = new_desc
+                                        db.commit()
+                                        st.session_state[f"edit_mode_{skill.id}"] = False # Close edit mode
+                                        st.success("Skill updated successfully!")
+                                        st.rerun()
+                                        
+                                    if st.form_submit_button("Cancel"):
+                                        st.session_state[f"edit_mode_{skill.id}"] = False
+                                        st.rerun()
+                else:
+                    st.info("No skills found. Add one in the next tab!")
+
+        # --- TAB 2: CREATE ---
+        with tab2:
+            st.subheader("Add a New Skill")
+            with st.form("add_skill_form"):
+                name = st.text_input("Skill Name (e.g. Python)")
+                description = st.text_area("Description (optional)")
+                submit = st.form_submit_button("Add Skill")
+
+                if submit:
+                    if name:
+                        with get_db() as db:
+                            new_skill = Skill(user_id=st.session_state.user_id, name=name, description=description)
+                            db.add(new_skill)
+                            db.commit()
+                        st.success(f"Added skill: {name}")
+                        st.balloons()
+                    else:
+                        st.error("Skill name is required")
 
     elif menu == "Log Study":
         st.subheader("Log Study Session")
 
-        db = SessionLocal()
-        skills = db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()
-        db.close()
+        with get_db() as db:
+            skills = db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()
 
         if not skills:
             st.warning("You need to add skills before you can log study time.")
@@ -157,107 +334,166 @@ else:
                 submit = st.form_submit_button("Log Session")
 
                 if submit:
-                    db = SessionLocal()
-                    new_session = StudySession(
-                        skill_id=skill_names[selected_skill],
-                        date=date,
-                        hours=hours,
-                        notes=notes
-                    )
-                    db.add(new_session)
-                    db.commit()
-                    db.close()
+                    with get_db() as db:
+                        new_session = StudySession(
+                            skill_id=skill_names[selected_skill],
+                            date=date,
+                            hours=hours,
+                            notes=notes
+                        )
+                        db.add(new_session)
+                        db.commit()
                     st.success(f"Logged {hours} hours for {selected_skill}!")
 
     elif menu == "History":
-        st.subheader("Study History")
+        st.subheader("Study History (Advanced Filter & Edit) 🔍")
 
-        db = SessionLocal()
-        # Join StudySession and Skill to get skill name, filter by user_id
-        sessions = db.query(StudySession, Skill.name).join(Skill).filter(Skill.user_id == st.session_state.user_id).all()
-        db.close()
+        with get_db() as db:
+            # --- DATE FILTER ---
+            col1, col2 = st.columns(2)
+            start_date = col1.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=30))
+            end_date = col2.date_input("End Date", datetime.date.today())
+
+            # Base Query
+            query = db.query(StudySession, Skill.name).join(Skill).filter(
+                Skill.user_id == st.session_state.user_id,
+                StudySession.date >= start_date,
+                StudySession.date <= end_date
+            )
+            
+            # --- SHOW SQL (Teacher Impressor) ---
+            with st.expander("Show SQL Code (For DBMS Class)"):
+                # Compile parameters for display
+                sql_statement = str(query.statement.compile(compile_kwargs={"literal_binds": True}))
+                st.code(sql_statement, language="sql")
+
+            sessions = query.order_by(StudySession.date.desc()).all()
 
         if sessions:
-            # Prepare data for display
-            history_data = []
             for session, skill_name in sessions:
-                history_data.append({
-                    "ID": session.id,
-                    "Date": session.date,
-                    "Skill": skill_name,
-                    "Hours": session.hours,
-                    "Notes": session.notes
-                })
-            
-            st.table(history_data)
+                with st.expander(f"{session.date} - {skill_name} ({session.hours} hrs)"):
+                    # Display Mode
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.markdown(f"**Notes:** {session.notes}")
+                    with col2:
+                        # Edit Toggle
+                        if st.button("Edit", key=f"sess_edit_{session.id}"):
+                            st.session_state[f"sess_edit_mode_{session.id}"] = True
+                    
+                    # Edit Mode
+                    if st.session_state.get(f"sess_edit_mode_{session.id}", False):
+                        st.info("Editing Session")
+                        with st.form(f"edit_sess_form_{session.id}"):
+                            # Pre-fill data
+                            new_date = st.date_input("Date", value=session.date)
+                            new_hours = st.number_input("Hours", value=float(session.hours), min_value=0.1, step=0.5)
+                            new_notes = st.text_area("Notes", value=session.notes)
+                            
+                            if st.form_submit_button("Update Session"):
+                                with get_db() as db:
+                                    # Fetch fresh object to update
+                                    s_to_update = db.query(StudySession).filter(StudySession.id == session.id).first()
+                                    s_to_update.date = new_date
+                                    s_to_update.hours = new_hours
+                                    s_to_update.notes = new_notes
+                                    db.commit()
+                                table_updated = True
+                                st.session_state[f"sess_edit_mode_{session.id}"] = False
+                                st.success("Updated!")
+                                st.rerun()
 
-            # Delete Functionality
+            # Delete Functionality (Simplified at bottom)
             st.divider()
             st.subheader("Delete a Session")
-            session_ids = [s["ID"] for s in history_data]
-            selected_id = st.selectbox("Select Session ID to Delete", session_ids)
-
-            if st.button("Delete Session"):
-                db = SessionLocal()
-                session_to_delete = db.query(StudySession).filter(StudySession.id == selected_id).first()
-                if session_to_delete:
-                    db.delete(session_to_delete)
-                    db.commit()
-                    st.success(f"Deleted session {selected_id}")
-                    st.rerun()
-                else:
-                    st.error("Session not found.")
-                db.close()
-
+            session_ids = [s[0].id for s in sessions] # s is (StudySession, skill_name)
+            if session_ids:
+                selected_id = st.selectbox("Select Session ID to Delete", session_ids)
+                if st.button("Delete Session", type="primary"):
+                    with get_db() as db:
+                        session_to_delete = db.query(StudySession).filter(StudySession.id == selected_id).first()
+                        if session_to_delete:
+                            db.delete(session_to_delete)
+                            db.commit()
+                            st.success(f"Deleted session {selected_id}")
+                            st.rerun()
+                        else:
+                            st.error("Session not found.")
         else:
-            st.info("No study sessions logged yet.")
+            st.info("No study sessions found in this date range.")
 
     elif menu == "Analytics":
         st.subheader("Analytics Dashboard")
         
-        db = SessionLocal()
-        # 1. Get all skills for the user
-        all_skills = db.query(Skill.name).filter(Skill.user_id == st.session_state.user_id).all()
-        skill_list = [s[0] for s in all_skills]
-
-        # 2. Get study sessions
-        sessions = db.query(StudySession.date, Skill.name, StudySession.hours).join(Skill).filter(Skill.user_id == st.session_state.user_id).all()
-        db.close()
-
-        if skill_list:
-            # Create a base DataFrame with all skills (initialized to 0 hours)
-            # This ensures even skills with no sessions appear
-            if sessions:
-                df_sessions = pd.DataFrame(sessions, columns=["Date", "Skill", "Hours"])
-            else:
-                df_sessions = pd.DataFrame(columns=["Date", "Skill", "Hours"])
-
-            # Metric: Total Hours
-            total_hours = df_sessions["Hours"].sum() if not df_sessions.empty else 0
-            st.metric("Total Hours Studied", f"{total_hours} hrs")
-
-            # Chart 1: Hours by Skill (Include 0 hours)
-            # Group by skill from sessions
-            if not df_sessions.empty:
-                skill_group = df_sessions.groupby("Skill")["Hours"].sum().reset_index()
-            else:
-                skill_group = pd.DataFrame(columns=["Skill", "Hours"])
+        with get_db() as db:
+            # 1. Total Hours (SQL Aggregate)
+            q1 = db.query(func.sum(StudySession.hours)).join(Skill).filter(Skill.user_id == st.session_state.user_id)
+            total_hours = q1.scalar() or 0
             
-            # Merge with full skill list to ensure all are present
-            df_all_skills = pd.DataFrame(skill_list, columns=["Skill"])
-            final_df = pd.merge(df_all_skills, skill_group, on="Skill", how="left").fillna(0)
+            # 2. Hours by Skill (SQL Group By)
+            q2 = db.query(Skill.name, func.sum(StudySession.hours).label("hours")).join(StudySession).filter(Skill.user_id == st.session_state.user_id).group_by(Skill.name)
+            skill_stats = q2.all()
+            
+            # 3. Daily Trend (SQL Group By)
+            q3 = db.query(StudySession.date, func.sum(StudySession.hours).label("hours")).join(Skill).filter(Skill.user_id == st.session_state.user_id).group_by(StudySession.date).order_by(StudySession.date)
+            daily_stats = q3.all()
+            
+            # 4. Raw Data for PDF
+            sessions = db.query(StudySession.date, Skill.name, StudySession.hours).join(Skill).filter(Skill.user_id == st.session_state.user_id).order_by(StudySession.date.desc()).all()
 
-            fig_bar = px.bar(final_df, x="Skill", y="Hours", color="Skill", title="Total Hours per Subject")
+            # --- TASK ANALYTICS ---
+            q_tasks = db.query(StudyTask.status, func.count(StudyTask.id)).filter(StudyTask.user_id == st.session_state.user_id).group_by(StudyTask.status)
+            task_stats = q_tasks.all() # [(Pending, 5), (Completed, 3)]
+
+            # --- SHOW SQL (Teacher Impressor) ---
+            with st.expander("Show SQL Code (For DBMS Class)"):
+                st.markdown("**1. Total Hours Query:**")
+                st.code(str(q1.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
+                st.markdown("**2. Hours by Skill Query (GROUP BY):**")
+                st.code(str(q2.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
+                st.markdown("**3. Daily Trend Query:**")
+                st.code(str(q3.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
+                st.markdown("**4. Task Status Query (GROUP BY):**")
+                st.code(str(q_tasks.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
+
+        # Display Total
+        st.metric("Total Hours Studied", f"{total_hours} hrs")
+
+        # Chart 0: Task Completion (Pie Chart)
+        if task_stats:
+            st.divider()
+            st.subheader("Task Completion Rates 🎯")
+            df_tasks = pd.DataFrame(task_stats, columns=["Status", "Count"])
+            fig_pie = px.pie(df_tasks, names="Status", values="Count", title="Task Status Overview", hole=0.4)
+            st.plotly_chart(fig_pie)
+
+        # Chart 0.5: Goal Progress
+        with get_db() as db:
+             goals = db.query(Goal.goal_name, Goal.progress).filter(Goal.user_id == st.session_state.user_id).all()
+        
+        if goals:
+            st.divider()
+            st.subheader("Goal Progress 🚀")
+            df_goals = pd.DataFrame(goals, columns=["Goal", "Progress"])
+            fig_goals = px.bar(df_goals, x="Goal", y="Progress", range_y=[0, 100], title="Long-term Goal Progress (%)", color="Progress")
+            st.plotly_chart(fig_goals)
+
+        # Chart 1: Hours by Skill
+        if skill_stats:
+            df_skills = pd.DataFrame(skill_stats, columns=["Skill", "Hours"])
+            fig_bar = px.bar(df_skills, x="Skill", y="Hours", color="Skill", title="Total Hours per Subject (SQL Aggregated)")
             st.plotly_chart(fig_bar)
+        else:
+            st.info("No study data by skill yet.")
 
-            # Chart 2: Study Trend (over time)
-            st.subheader("Study Trend")
-            if not df_sessions.empty:
-                date_group = df_sessions.groupby("Date")["Hours"].sum().reset_index()
-                fig_line = px.line(date_group, x="Date", y="Hours", markers=True, title="Daily Study Hours")
-                st.plotly_chart(fig_line)
-            else:
-                st.info("Log some study sessions to see your daily trend!")
+        # Chart 2: Study Trend
+        st.subheader("Study Trend")
+        if daily_stats:
+            df_trend = pd.DataFrame(daily_stats, columns=["Date", "Hours"])
+            fig_line = px.line(df_trend, x="Date", y="Hours", markers=True, title="Daily Study Hours (SQL Aggregated)")
+            st.plotly_chart(fig_line)
+        else:
+            st.info("Log some study sessions to see your daily trend!")
 
             # PDF Export
             st.divider()
@@ -293,26 +529,24 @@ else:
                 buffer.seek(0)
                 st.download_button(label="Download PDF", data=buffer, file_name="study_report.pdf", mime="application/pdf")
         
-        else:
-            st.info("No skills added yet. Go to 'Add Skill' to get started!")
+
 
     elif menu == "Admin Panel":
         st.subheader("Admin Panel 🛠️")
         if st.session_state.role != "admin":
             st.error("Access Denied")
         else:
-            db = SessionLocal()
-            users = db.query(User).all()
-            total_users = len(users)
-            
-            # Global stats
-            total_sessions = db.query(StudySession).count()
-            
-            col1, col2 = st.columns(2)
-            col1.metric("Total Users", total_users)
-            col2.metric("Total Study Sessions", total_sessions)
-            
-            st.subheader("User List")
-            user_data = [{"ID": u.id, "Name": u.name, "Email": u.email, "Role": u.role} for u in users]
-            st.table(user_data)
-            db.close()
+            with get_db() as db:
+                users = db.query(User).all()
+                total_users = len(users)
+                
+                # Global stats
+                total_sessions = db.query(StudySession).count()
+                
+                col1, col2 = st.columns(2)
+                col1.metric("Total Users", total_users)
+                col2.metric("Total Study Sessions", total_sessions)
+                
+                st.subheader("User List")
+                user_data = [{"ID": u.id, "Name": u.name, "Email": u.email, "Role": u.role} for u in users]
+                st.table(user_data)
