@@ -660,7 +660,7 @@ else:
                 query = query.filter(Skill.name == filter_skill)
             
             # --- SHOW SQL (Teacher Impressor) ---
-            with st.expander("Show SQL Code (For DBMS Class)"):
+            with st.expander("Show SQL Code "):
                 # Compile parameters for display
                 sql_statement = str(query.statement.compile(compile_kwargs={"literal_binds": True}))
                 st.code(sql_statement, language="sql")
@@ -745,7 +745,7 @@ else:
             task_stats = q_tasks.all() # [(Pending, 5), (Completed, 3)]
 
             # --- SHOW SQL (Teacher Impressor) ---
-            with st.expander("Show SQL Code (For DBMS Class)"):
+            with st.expander("Show SQL Code "):
                 st.markdown("**1. Total Hours Query:**")
                 st.code(str(q1.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
                 st.markdown("**2. Hours by Skill Query (GROUP BY):**")
