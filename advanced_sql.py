@@ -127,12 +127,12 @@ def render_advanced_sql_page(db):
         cte_sql = text("""
             WITH monthly_stats AS (
                 SELECT 
-                    DATE_FORMAT(date, '%Y-%m') as month,
+                    SUBSTR(CAST(date AS CHAR), 1, 7) as month,
                     COUNT(*) as session_count,
                     SUM(hours) as total_hours,
                     AVG(hours) as avg_hours
                 FROM study_sessions
-                GROUP BY DATE_FORMAT(date, '%Y-%m')
+                GROUP BY SUBSTR(CAST(date AS CHAR), 1, 7)
             )
             SELECT 
                 month,
