@@ -1,0 +1,89 @@
+================================================================================
+🎓 STUDY & SKILL MANAGEMENT SYSTEM - SQL TECHNICAL DOCUMENTATION
+================================================================================
+
+This document details how SQL (Structured Query Language) is implemented across 
+the project, ranging from basic data definition to advanced analytical queries.
+
+--------------------------------------------------------------------------------
+1. DATABASE DEFINITION (DDL - Data Definition Language)
+--------------------------------------------------------------------------------
+Defined in: models.py
+
+* TABLE CREATION:
+  We use 'declarative_base' from SQLAlchemy. Every class (e.g., class User) is 
+  translated into a 'CREATE TABLE' statement in MySQL.
+
+* CONSTRAINTS:
+  - Primary Key: 'id = Column(Integer, primary_key=True)' ensures uniqueness.
+  - Foreign Key: 'user_id = Column(Integer, ForeignKey("users.id"))' maintains 
+    Relational Integrity between tables.
+  - Check Constraint: 'CheckConstraint("hours > 0")' ensures that study hours 
+    cannot be negative or zero at the database level.
+  - Nullability: 'nullable=False' ensures mandatory fields are always filled.
+
+* OPTIMIZATION (INDEXING):
+  - Indexing: 'Index("idx_skill_date", "skill_id", "date")'
+  - Why: We indexed columns used in 'WHERE' and 'ORDER BY' clauses (like dates 
+    and task status) to significantly speed up query performance as data grows.
+
+--------------------------------------------------------------------------------
+2. DATA MANIPULATION (DML - Data Manipulation Language)
+--------------------------------------------------------------------------------
+Implemented via SQLAlchemy ORM logic in: app.py, auth.py, audit_utils.py
+
+* CREATE (Insert):
+  Performed when a user logs a study session or creates a new goal.
+  SQL Equivalent: INSERT INTO study_sessions (skill_id, date, hours, ...) VALUES (...)
+
+* READ (Select):
+  Performed for the History section and login authentication.
+  SQL Equivalent: SELECT * FROM users WHERE email = ?
+
+* UPDATE:
+  Used for automated goal progress calculation.
+  SQL Equivalent: UPDATE goals SET progress = 85 WHERE id = 10
+
+* DELETE:
+  Used for removing tasks or skills.
+  SQL Equivalent: DELETE FROM study_tasks WHERE id = 5
+
+--------------------------------------------------------------------------------
+3. ADVANCED SQL & DBMS CONCEPTS
+--------------------------------------------------------------------------------
+Found in: advanced_sql.py
+
+* COMMON TABLE EXPRESSIONS (CTEs):
+  We use the 'WITH' clause to create temporary result sets for complex stats.
+  Query: WITH monthly_stats AS (SELECT ...) SELECT * FROM monthly_stats;
+  Purpose: To calculate monthly study distribution without loading raw data into RAM.
+
+* WINDOW FUNCTIONS:
+  - RANK(): Used to rank students based on their total study time.
+  - SUM() OVER: Used to calculate a 'Running Total' of study hours by date.
+  Purpose: Allows calculations across rows related to the current row.
+
+* SUBQUERIES:
+  - Scalar Subquery: Used to find users whose study hours are higher than the 
+    global average.
+  - NOT IN: Used to identify 'Inactive Users' (users who exist but have no logged 
+    sessions).
+
+* COMPLEX AGGREGATIONS:
+  - GROUP BY: Used to sum hours per subject.
+  - HAVING: Used to filter groups (e.g., "Only show subjects where the total 
+    study time exceeds 5 hours").
+
+--------------------------------------------------------------------------------
+4. TRANSACTION & ACCOUNTABILITY
+--------------------------------------------------------------------------------
+* AUDIT LOGGING:
+  Every administrative action (CREATE/UPDATE/DELETE) triggers an entry into the 
+  'audit_logs' table. This demonstrates 'Data Provenance' and accountability in 
+  a multiuser DBMS environment.
+
+* CASCADING DELETES:
+  Defined in models.py: 'cascade="all, delete-orphan"'
+  This ensures that if a User is deleted, all their skills and sessions are 
+  automatically cleaned up, maintaining 'Referential Integrity'.
+================================================================================
