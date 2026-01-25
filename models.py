@@ -38,6 +38,7 @@ class StudySession(Base):
     hours = Column(Float, nullable=False)
     notes = Column(Text, nullable=True)
 
+
     __table_args__ = (
         CheckConstraint('hours > 0', name='check_positive_hours'),
         Index('idx_skill_date', 'skill_id', 'date'),  # Composite index for filtering by skill and date

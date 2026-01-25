@@ -5,6 +5,7 @@ import datetime
 from models import User, Skill, StudySession, Goal, StudyTask
 from auth import hash_password
 
+
 def render_admin_panel(db):
     st.subheader("Admin Panel 🛠️")
     

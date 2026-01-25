@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from database import SessionLocal
 
+
 @contextmanager
 def get_db():
     """

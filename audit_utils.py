@@ -2,8 +2,10 @@
 Utility functions for audit logging
 Demonstrates transaction tracking in database systems
 """
+
 from models import AuditLog
 import json
+
 
 def log_audit(db, user_id, action, table_name, record_id=None, details=None):
     """

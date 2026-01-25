@@ -143,6 +143,7 @@ def render_advanced_sql_page(db):
             ORDER BY month DESC
         """)
         
+        
         with st.expander("📝 Show SQL Query"):
             st.code(str(cte_sql), language="sql")
         
