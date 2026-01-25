@@ -2,6 +2,7 @@ import bcrypt
 from database_utils import get_db
 from models import User
 
+
 # --------------------
 # PASSWORD HELPERS
 # --------------------

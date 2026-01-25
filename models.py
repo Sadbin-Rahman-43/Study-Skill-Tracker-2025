@@ -38,9 +38,10 @@ class StudySession(Base):
     hours = Column(Float, nullable=False)
     notes = Column(Text, nullable=True)
 
+
     __table_args__ = (
         CheckConstraint('hours > 0', name='check_positive_hours'),
-        Index('idx_skill_date', 'skill_id', 'date'),  # Composite index for filtering by skill and date
+        Index('idx_skill_date', 'skill_id', 'date'),  # Composite index for filtering by skill and date.
     )
 
     skill = relationship("Skill", back_populates="sessions")
@@ -122,10 +123,10 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for system operations
-    action = Column(String(50), nullable=False)  # CREATE, UPDATE, DELETE
-    table_name = Column(String(50), nullable=False)  # Which table was affected
-    record_id = Column(Integer, nullable=True)  # ID of affected record
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for system operations.
+    action = Column(String(50), nullable=False)  # CREATE, UPDATE, DELETE.
+    table_name = Column(String(50), nullable=False)  # Which table was affected.
+    record_id = Column(Integer, nullable=True)  # ID of affected record.
     details = Column(Text, nullable=True)  # Additional context (JSON format)
     timestamp = Column(DateTime, server_default=func.now(), index=True)
     

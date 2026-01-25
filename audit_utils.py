@@ -1,9 +1,11 @@
 """
-Utility functions for audit logging
+Utility functions for audit logging .
 Demonstrates transaction tracking in database systems
 """
+
 from models import AuditLog
 import json
+
 
 def log_audit(db, user_id, action, table_name, record_id=None, details=None):
     """
@@ -28,6 +30,6 @@ def log_audit(db, user_id, action, table_name, record_id=None, details=None):
         db.add(audit_entry)
         db.commit()
     except Exception as e:
-        # Silent fail - don't break operations due to audit logging
+        # Silent fail - don't break operations due to audit logging.
         print(f"Audit log error: {e}")
         pass

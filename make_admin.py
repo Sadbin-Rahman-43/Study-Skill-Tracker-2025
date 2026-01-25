@@ -1,6 +1,7 @@
 from database_utils import get_db
 from models import User
 
+#easy
 def promote_to_admin():
     print("--- Admin Promotion Tool ---")
     
