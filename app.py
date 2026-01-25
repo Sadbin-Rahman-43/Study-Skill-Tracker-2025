@@ -26,6 +26,10 @@ if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "page" not in st.session_state:
     st.session_state.page = "login"
+if "pending_completion" not in st.session_state:
+    st.session_state.pending_completion = None # Stores {type: 'task'|'topic', id: id, name: name, skill_id: skill_id}
+if "success_notification" not in st.session_state:
+    st.session_state.success_notification = None
 
 st.title("Study & Skill Management System")
 
@@ -89,6 +93,11 @@ else:
 
     st.sidebar.title(f"Welcome {st.session_state.name} ({st.session_state.role})")
     
+    # --- NOTIFICATION HUB ---
+    if st.session_state.success_notification:
+        st.toast(st.session_state.success_notification, icon="✅")
+        st.session_state.success_notification = None
+
     # Show Admin Panel to everyone (access control handled inside the panel)
     menu = st.sidebar.radio("Navigation", ["Dashboard", "Study Plan", "Goals", "Academic Tracker", "Admin Panel", "Advanced SQL", "Manage Skills", "Log Study", "History", "Analytics"])
 
@@ -97,6 +106,66 @@ else:
         st.session_state.logged_in = False
         st.session_state.page = "login"
         st.rerun()
+
+    # ------------------ COMPLETION PROMPT ------------------
+    if st.session_state.pending_completion:
+        pending = st.session_state.pending_completion
+        st.info(f"🎉 Great job! You finished: **{pending['name']}**")
+        with st.form("completion_log_form"):
+            st.write("How much time did you spend on this?")
+            c_hours = st.number_input("Hours", min_value=0.1, step=0.5, value=1.0)
+            c_notes = st.text_area("Notes", value=f"Completed {pending['type']}: {pending['name']}")
+            
+            # For topics, we might need a skill if not implicitly linked. 
+            # In this app, skills are usually broader than topics.
+            
+            col_save, col_skip = st.columns(2)
+            save_submit = col_save.form_submit_button("Log & Complete")
+            skip_submit = col_skip.form_submit_button("Complete without Logging")
+
+            if save_submit:
+                # Validate skill_id before creating session
+                if pending['skill_id'] is None:
+                    st.error("⚠️ Cannot log session: No skill associated. Please create a skill first or link this task to a skill.")
+                    st.info("Tip: Go to 'Manage Skills' to create a new skill, then link it to your tasks.")
+                else:
+                    with get_db() as db:
+                        # 1. Create Session
+                        new_session = StudySession(
+                            skill_id=pending['skill_id'],
+                            date=datetime.date.today(),
+                            hours=c_hours,
+                            notes=c_notes
+                        )
+                        db.add(new_session)
+                        
+                        # 2. Update Status
+                        if pending['type'] == 'task':
+                            task = db.query(StudyTask).filter(StudyTask.id == pending['id']).first()
+                            if task: task.status = "Completed"
+                        else:
+                            topic = db.query(Topic).filter(Topic.id == pending['id']).first()
+                            if topic: topic.status = "Completed"
+                        
+                        db.commit()
+                        log_audit(db, st.session_state.user_id, "CREATE", "study_sessions", new_session.id, {"source": pending['type'], "id": pending['id']})
+                    
+                    st.session_state.pending_completion = None
+                    st.session_state.success_notification = "Activity logged and marked as completed!"
+                    st.rerun()
+
+            if skip_submit:
+                with get_db() as db:
+                    if pending['type'] == 'task':
+                        task = db.query(StudyTask).filter(StudyTask.id == pending['id']).first()
+                        if task: task.status = "Completed"
+                    else:
+                        topic = db.query(Topic).filter(Topic.id == pending['id']).first()
+                        if topic: topic.status = "Completed"
+                    db.commit()
+                st.session_state.pending_completion = None
+                st.success("Marked as completed!")
+                st.rerun()
 
     # ------------------ PAGES ------------------
     
@@ -135,8 +204,14 @@ else:
                         is_done = task.status == "Completed"
                         if col_chk.checkbox("Done", value=is_done, key=f"dash_check_{task.id}", label_visibility="hidden"):
                             if not is_done:
-                                task.status = "Completed"
-                                db.commit()
+                                # Trigger Prompt
+                                user_skills = db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()
+                                st.session_state.pending_completion = {
+                                    'type': 'task',
+                                    'id': task.id,
+                                    'name': task.task,
+                                    'skill_id': task.skill_id or (user_skills[0].id if user_skills else None)
+                                }
                                 st.rerun()
                         else:
                             if is_done:
@@ -196,6 +271,7 @@ else:
         st.subheader("Study Plan & To-Do 📝")
         
         with get_db() as db:
+            skills = db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()
             # --- 1. BACKLOG CHECKER ---
             today = datetime.date.today()
             backlog_query = db.query(StudyTask).filter(
@@ -222,11 +298,10 @@ else:
                     t_desc = st.text_input("Task Description (e.g., Read Chapter 4)")
                     
                     # Skills Dropdown
-                    skills = db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()
                     t_skill = st.selectbox("Related Skill (Optional)", ["None"] + [s.name for s in skills])
 
-                    # Goals Dropdown
-                    goals = db.query(Goal).filter(Goal.user_id == st.session_state.user_id).filter(Goal.status != "Achieved").all()
+                    # Goals Dropdown (Include all goals)
+                    goals = db.query(Goal).filter(Goal.user_id == st.session_state.user_id).all()
                     t_goal = st.selectbox("Link to Goal (Optional)", ["None"] + [g.goal_name for g in goals])
 
                     t_date = st.date_input("Due Date", today)
@@ -253,7 +328,7 @@ else:
                         )
                         db.add(new_task)
                         db.commit()
-                        st.success("Task Added & Linked!")
+                        st.session_state.success_notification = f"Added Task: {t_desc}"
                         st.rerun()
 
             # --- 3. TODAY'S TASKS ---
@@ -281,8 +356,16 @@ else:
                     checked = col1.checkbox("Done", value=is_done, key=f"check_{task.id}", label_visibility="hidden")
                     
                     if checked != is_done:
-                        task.status = "Completed" if checked else "Pending"
-                        db.commit()
+                        if checked:
+                            st.session_state.pending_completion = {
+                                'type': 'task',
+                                'id': task.id,
+                                'name': task.task,
+                                'skill_id': task.skill_id or (skills[0].id if skills else None)
+                            }
+                        else:
+                            task.status = "Pending"
+                            db.commit()
                         st.rerun()
                     
                     if is_done:
@@ -296,6 +379,7 @@ else:
                         db.delete(task)
                         db.commit()
                         log_audit(db, st.session_state.user_id, "DELETE", "study_tasks", task_to_del.id, {"task": task_to_del.task})
+                        st.session_state.success_notification = f"Deleted Task: {task_to_del.task}"
                         st.rerun()
 
             else:
@@ -318,12 +402,16 @@ else:
                         
                         calc_progress = int((completed_linked / total_linked * 100)) if total_linked > 0 else 0
                         
-                        # Update DB if changed
+                        # Update DB if changed (Handle status reversion)
                         if calc_progress != goal.progress:
                             goal.progress = calc_progress
-                            if calc_progress == 100 and goal.status != "Achieved":
+                            
+                            if calc_progress == 100:
                                 goal.status = "Achieved"
-                            db.commit() # Save calculated progress
+                            elif calc_progress < 100 and goal.status == "Achieved":
+                                goal.status = "In Progress"
+                            
+                            db.commit() # Save calculated progress and status
 
                         with st.expander(f"{goal.goal_name} ({calc_progress}%) - {goal.status}"):
                             st.write(f"**Linked Tasks:** {completed_linked}/{total_linked}")
@@ -349,7 +437,7 @@ else:
                                 db.delete(goal)
                                 db.commit()
                                 log_audit(db, st.session_state.user_id, "DELETE", "goals", goal_to_del.id, {"goal_name": goal_to_del.goal_name})
-                                st.success("Goal deleted!")
+                                st.session_state.success_notification = f"Deleted Goal: {goal_to_del.goal_name}"
                                 st.rerun()
                 else:
                     st.info("No active goals. Set one in the next tab!")
@@ -371,7 +459,8 @@ else:
                         db.add(new_goal)
                         db.commit()
                         log_audit(db, st.session_state.user_id, "CREATE", "goals", new_goal.id, {"goal_name": g_name})
-                    st.success("New Goal Set!")
+                    st.session_state.success_notification = f"Goal Set: {g_name} 🎯"
+                    st.balloons()
                     st.rerun()
 
     elif menu == "Academic Tracker":
@@ -394,7 +483,7 @@ else:
                             new_sem = Semester(user_id=st.session_state.user_id, name=sem_name)
                             db.add(new_sem)
                             db.commit()
-                        st.success(f"Added {sem_name}")
+                        st.session_state.success_notification = f"Created Semester: {sem_name}"
                         st.rerun()
 
             # 2. Add Subject
@@ -416,7 +505,7 @@ else:
                                 new_sub = Subject(semester_id=sem_id, name=sub_name)
                                 db.add(new_sub)
                                 db.commit()
-                                st.success(f"Added {sub_name} to {s_sem}")
+                                st.session_state.success_notification = f"Added Subject: {sub_name}"
                                 st.rerun()
 
             st.divider()
@@ -471,6 +560,7 @@ else:
                                 new_topic = Topic(subject_id=sel_sub.id, name=t_name, status="Pending")
                                 db.add(new_topic)
                                 db.commit()
+                                st.session_state.success_notification = f"Added Topic: {t_name}"
                                 st.rerun()
                         
                         # --- TOPIC LIST ---
@@ -481,8 +571,15 @@ else:
                                 is_done = topic.status == "Completed"
                                 if c_chk.checkbox("Done", value=is_done, key=f"topic_{topic.id}", label_visibility="hidden"):
                                     if not is_done:
-                                        topic.status = "Completed"
-                                        db.commit()
+                                        # Use a default skill or find one matching subject name
+                                        all_skills = db.query(Skill).filter(Skill.user_id == st.session_state.user_id).all()
+                                        match_skill = next((s for s in all_skills if s.name.lower() in sel_sub.name.lower()), None)
+                                        st.session_state.pending_completion = {
+                                            'type': 'topic',
+                                            'id': topic.id,
+                                            'name': topic.name,
+                                            'skill_id': match_skill.id if match_skill else (all_skills[0].id if all_skills else None)
+                                        }
                                         st.rerun()
                                 else:
                                     if is_done:
@@ -540,7 +637,7 @@ else:
                                         db.delete(skill)
                                         db.commit()
                                         log_audit(db, st.session_state.user_id, "DELETE", "skills", skill_to_del.id, {"name": skill_to_del.name, "sessions": session_count})
-                                        st.success(f"Deleted {skill_to_del.name} and {session_count} linked sessions")
+                                        st.session_state.success_notification = f"Deleted Skill: {skill_to_del.name}"
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"Error deleting skill: {str(e)}")
@@ -558,7 +655,7 @@ else:
                                         skill.description = new_desc
                                         db.commit()
                                         st.session_state[f"edit_mode_{skill.id}"] = False # Close edit mode
-                                        st.success("Skill updated successfully!")
+                                        st.session_state.success_notification = f"Updated Skill: {skill.name}"
                                         st.rerun()
                                         
                                     if st.form_submit_button("Cancel"):
@@ -582,7 +679,7 @@ else:
                             db.add(new_skill)
                             db.commit()
                             log_audit(db, st.session_state.user_id, "CREATE", "skills", new_skill.id, {"name": name})
-                        st.success(f"Added skill: {name}")
+                        st.session_state.success_notification = f"Created Skill: {name}"
                         st.balloons()
                         st.rerun()
                     else:
@@ -622,7 +719,8 @@ else:
                             db.add(new_session)
                             db.commit()
                             log_audit(db, st.session_state.user_id, "CREATE", "study_sessions", new_session.id, {"skill": selected_skill, "hours": hours})
-                        st.success(f"Logged {hours:.1f} hours for {selected_skill}!")
+                        st.session_state.success_notification = f"Logged {hours:.1f} hours for {selected_skill}!"
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error logging session: {str(e)}")
                         st.info("💡 Make sure you've selected a valid skill and entered positive hours.")
@@ -698,7 +796,7 @@ else:
                                     db.commit()
                                 table_updated = True
                                 st.session_state[f"sess_edit_mode_{session.id}"] = False
-                                st.success("Updated!")
+                                st.session_state.success_notification = "Session Updated!"
                                 st.rerun()
 
             # Delete Functionality (Simplified at bottom)
@@ -714,7 +812,7 @@ else:
                         if session_to_delete:
                             db.delete(session_to_delete)
                             db.commit()
-                            st.success(f"Deleted session {selected_id}")
+                            st.session_state.success_notification = f"Deleted Session {selected_id}"
                             st.rerun()
                         else:
                             st.error("Session not found.")
@@ -733,9 +831,32 @@ else:
             q2 = db.query(Skill.name, func.sum(StudySession.hours).label("hours")).join(StudySession).filter(Skill.user_id == st.session_state.user_id).group_by(Skill.name)
             skill_stats = q2.all()
             
-            # 3. Daily Trend (SQL Group By)
-            q3 = db.query(StudySession.date, func.sum(StudySession.hours).label("hours")).join(Skill).filter(Skill.user_id == st.session_state.user_id).group_by(StudySession.date).order_by(StudySession.date)
-            daily_stats = q3.all()
+            # 3. Daily Trend (Combined Stats)
+            q_hours = db.query(StudySession.date, func.sum(StudySession.hours).label("hours"))\
+                .join(Skill)\
+                .filter(Skill.user_id == st.session_state.user_id)\
+                .group_by(StudySession.date)
+            
+            q_tasks_daily = db.query(StudyTask.due_date.label("date"), func.count(StudyTask.id).label("tasks"))\
+                .filter(StudyTask.user_id == st.session_state.user_id, StudyTask.status == "Completed")\
+                .group_by(StudyTask.due_date)
+            
+            hours_df = pd.DataFrame(q_hours.all(), columns=["Date", "Hours"])
+            tasks_df = pd.DataFrame(q_tasks_daily.all(), columns=["Date", "Tasks"])
+            
+            if not hours_df.empty and not tasks_df.empty:
+                daily_stats_df = pd.merge(hours_df, tasks_df, on="Date", how="outer").fillna(0)
+            elif not hours_df.empty:
+                daily_stats_df = hours_df
+                daily_stats_df["Tasks"] = 0
+            elif not tasks_df.empty:
+                daily_stats_df = tasks_df
+                daily_stats_df["Hours"] = 0
+            else:
+                daily_stats_df = pd.DataFrame(columns=["Date", "Hours", "Tasks"])
+            
+            if not daily_stats_df.empty:
+                daily_stats_df = daily_stats_df.sort_values("Date")
             
             # 4. Raw Data for PDF
             sessions = db.query(StudySession.date, Skill.name, StudySession.hours).join(Skill).filter(Skill.user_id == st.session_state.user_id).order_by(StudySession.date.desc()).all()
@@ -750,9 +871,11 @@ else:
                 st.code(str(q1.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
                 st.markdown("**2. Hours by Skill Query (GROUP BY):**")
                 st.code(str(q2.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
-                st.markdown("**3. Daily Trend Query:**")
-                st.code(str(q3.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
-                st.markdown("**4. Task Status Query (GROUP BY):**")
+                st.markdown("**3. Daily Trend Query (Hours):**")
+                st.code(str(q_hours.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
+                st.markdown("**4. Daily Trend Query (Completed Tasks):**")
+                st.code(str(q_tasks_daily.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
+                st.markdown("**5. Task Status Query (GROUP BY):**")
                 st.code(str(q_tasks.statement.compile(compile_kwargs={"literal_binds": True})), language="sql")
 
         # Display Total
@@ -786,13 +909,14 @@ else:
             st.info("No study data by skill yet.")
 
         # Chart 2: Study Trend
-        st.subheader("Study Trend")
-        if daily_stats:
-            df_trend = pd.DataFrame(daily_stats, columns=["Date", "Hours"])
-            fig_line = px.line(df_trend, x="Date", y="Hours", markers=True, title="Daily Study Hours (SQL Aggregated)")
-            st.plotly_chart(fig_line)
+        st.subheader("Study & Activity Trend")
+        if not daily_stats_df.empty:
+            fig_trend = px.line(daily_stats_df, x="Date", y=["Hours", "Tasks"], markers=True, 
+                               title="Productivity Trend: Hours Studied vs. Tasks Completed",
+                               labels={"value": "Count / Hours", "variable": "Metric"})
+            st.plotly_chart(fig_trend)
         else:
-            st.info("Log some study sessions to see your daily trend!")
+            st.info("Log some study sessions or complete tasks to see your trend!")
 
         # PDF Export (Always Visible)
         st.divider()
