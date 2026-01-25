@@ -5,6 +5,7 @@ from database import SessionLocal
 @contextmanager
 def get_db():
     """
+    easy.
     Context manager to ensure database sessions are properly closed.
     
     Usage:

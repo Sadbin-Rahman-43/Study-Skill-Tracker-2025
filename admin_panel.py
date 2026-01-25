@@ -131,7 +131,7 @@ def render_admin_panel(db):
                 
                 # Add Skill for User
                 if st.button("Add Skill for User", key="adm_add_sk_btn"):
-                     # Simple form
+                     # Simple and easy form
                      pass # Implementing full form inside button is tricky, simpler to skip for V1 or use session state
                 with st.form("adm_add_sk"):
                     sk_name = st.text_input("New Skill Name")
